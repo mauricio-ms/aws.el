@@ -1,5 +1,6 @@
 ;;; -*- lexical-binding: t -*-
 (use-package async)
+(use-package consult)
 
 ;; MISSING FEATURES
 ;; - load next items when user came to the end of the list
@@ -9,51 +10,81 @@
 ;; Check these alternatives to be able to implement the MISSING FEATURES
 ;; https://github.com/minad/consult
 ;; https://github.com/minad/vertico
+(defgroup aws nil
+  "An interactive AWS environment for emacs."
+  :tag "AWS")
 
-(progn
-  (setq params nil)
-  
-  (setq timer nil)
-  (setq cursor 0)
+(defgroup aws-ssm-faces nil
+  "AWS SSM Faces."
+  :group 'aws)
 
-  (aws-ssm--load-data nil)
-  
-  (ivy-read "SSM: " (lambda (filter y z)
-		      (if (not (string-empty-p filter))
-			  (progn
-			    (if timer
-				(cancel-timer timer))
-			    (setq timer
-				  (run-at-time 0.25 nil (lambda () (aws-ssm--load-data filter))))))
-		      params)
-	    :update-fn (lambda ()
-			 (message "x: %s" ivy-history))
-	    :dynamic-collection t))
+(defface aws-ssm-value-font
+  '((((background  dark)) :foreground "green")
+    (((background light)) :foreground "black"))
+  "AWS SSM value font."
+  :group 'aws-ssm-faces)
 
-(defun aws-ssm--load-data (filter)
+;; (format "%-9s => Value" "aaaaaaaaa")
+
+;; (consult--read `(,(format "key => %s" (propertize "value" 'face 'aws-ssm-value-font))
+;; 				 ,(format "keyaaaaaaaaaaaaaaaaaaaaaaa => %s" (propertize "value" 'face 'aws-ssm-value-font))
+;; 				 )
+;; 			   :prompt "SSM: "
+;; 			   :lookup (lambda (selected candidates input narrow)
+;; 						 (let ((start-value-pos (next-property-change 0 selected)))
+;; 						   (substring-no-properties selected start-value-pos)))
+;; 			   ;; :lookup (lambda (selected candidates input narrow)
+;; 			   ;; 			 (aws-ssm--get-parameter-value selected))
+;; 			   )
+
+(defvar parameters-cache nil
+  "Cache to store the parameters candidates")
+
+(defun aws-ssm ()
+  (interactive)
+  (consult--read parameters-cache
+				 :prompt "SSM: "
+				 :lookup (lambda (selected candidates input narrow)
+						   (let ((start-value-pos (next-property-change 0 selected)))
+							 (substring-no-properties selected start-value-pos)))
+				 ;; :lookup (lambda (selected candidates input narrow)
+				 ;; 			 (aws-ssm--get-parameter-value selected))
+				 ))
+
+(defun aws-ssm--load-data ()
+  (message "AWS SSM updating parameters cache ...")
   (async-start
-   (aws-ssm--run-async filter)
-   (lambda (result)
-     (setq cursor 0)
-     (setq params result)
-     (ivy-update-candidates result))))
+   (aws-ssm--get-parameters-names-async "aws ssm describe-parameters --max-items 2")
+   (lambda (names)
+	 (let ((get-parameters-command (format "aws ssm get-parameters --names %s" (string-join names " "))))
+	   (async-start
+		(aws-ssm--get-parameters-values-async get-parameters-command)
+		(lambda (values)
+		  (setq parameters-cache values)
+		  (message "AWS SSM parameters cache updated")))))))
 
-(defun aws-ssm--command (filter)
-  (format "aws ssm describe-parameters %s --max-items 10" (aws-ssm--filters filter)))
+(defun aws-ssm--get-parameters-names-async (command)
+  (lambda ()
+	(defun execute-command ()
+	  (json-parse-string (shell-command-to-string command)))
 
-(defun aws-ssm--filters (filter)
-  (if (not (string-empty-p (s-trim (or filter ""))))
-      (format "--parameter-filters \"Key=Name,Option=Contains,Values=%s\"" filter)
-    ""))
+	(defun parse-describe-parameters-resp (command-result-json)
+	  (mapcar (lambda (x)
+				(gethash "Name" x))
+			  (gethash "Parameters" command-result-json)))
+	
+	(parse-describe-parameters-resp (execute-command))))
 
-(defun aws-ssm--run-async (filter)
-  (let ((command (aws-ssm--command filter)))
-    (lambda ()
-      (defun aws-ssm--parse-params (command-result-json)
-	(mapcar (lambda (x)
-		  (gethash "Name" x))
-		(gethash "Parameters" command-result-json)))
-      (defun aws-ssm--command-to-json (command-result)
-	(json-parse-string command-result))
+(defun aws-ssm--get-parameters-values-async (command)
+  (lambda ()
+	(defun execute-command ()
+	  (json-parse-string (shell-command-to-string command)))
 
-      (aws-ssm--parse-params (aws-ssm--command-to-json (shell-command-to-string command))))))
+	(defun parse-get-parameters-resp (command-result-json)
+	  (mapcar (lambda (x)
+				(format "%s => %s"
+						(gethash "Name" x)
+						(propertize (gethash "Value" x) 'face 'aws-ssm-value-font)))
+			  (gethash "Parameters" command-result-json)))
+	
+	(setq parameters-cache (parse-get-parameters-resp (execute-command)))))
