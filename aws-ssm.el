@@ -16,34 +16,33 @@
   "AWS SSM value font."
   :group 'aws-ssm-faces)
 
-;; (format "%-9s => Value" "aaaaaaaaa")
+(defconst aws-ssm--value-limit-length 80
+  "Constant to define the limit length that values displayed in the aws-ssm list can have. values with a value larger than this limit should be truncated.")
 
-;; (consult--read `(,(format "key => %s" (propertize "value" 'face 'aws-ssm-value-font))
-;; 				 ,(format "keyaaaaaaaaaaaaaaaaaaaaaaa => %s" (propertize "value" 'face 'aws-ssm-value-font))
-;; 				 )
-;; 			   :prompt "SSM: "
-;; 			   :lookup (lambda (selected candidates input narrow)
-;; 						 (let ((start-value-pos (next-property-change 0 selected)))
-;; 						   (substring-no-properties selected start-value-pos)))
-;; 			   ;; :lookup (lambda (selected candidates input narrow)
-;; 			   ;; 			 (aws-ssm--get-parameter-value selected))
-;; 			   )
+(defvar aws-ssm--parameters-model nil
+  "Cache to store the parameters candidates model")
 
-(defvar parameters-cache nil
-  "Cache to store the parameters candidates")
+(defvar aws-ssm--parameters-view nil
+  "Cache to store the parameters candidates view")
+
+;; TODO => Add comments
+;; TODO => Remove max-items parameter
+;; TODO => Serialize and deserialize the cache variables
 
 (defun aws-ssm ()
   (interactive)
-  (consult--read parameters-cache
+  (consult--read aws-ssm--parameters-view
 				 :prompt "SSM: "
 				 :lookup (lambda (selected candidates input narrow)
-						   (message (s-trim (nth 0 (s-split "=>" selected)))))
-				 ;; :lookup (lambda (selected candidates input narrow)
-				 ;; 		   (let ((start-value-pos (next-property-change 0 selected)))
-				 ;; 			 (substring-no-properties selected start-value-pos)))
-				 ;; :lookup (lambda (selected candidates input narrow)
-				 ;; 			 (aws-ssm--get-parameter-value selected))
-				 ))
+						   (let ((value (gethash (s-trim (nth 0 (s-split "=>" selected)))
+												 aws-ssm--parameters-model)))
+							 (if (aws-ssm--truncate? value aws-ssm--value-limit-length)
+								 (let ((buffer (get-buffer-create "*aws-ssm*")))
+								   (with-current-buffer buffer
+									 (erase-buffer)
+									 (insert value)
+									 (switch-to-buffer buffer)))
+							   (message value))))))
 
 (defun aws-ssm-reload-cache ()
   (interactive)
@@ -55,28 +54,42 @@
 	   (async-start
 		(aws-ssm--get-parameters-values-async get-parameters-command)
 		(lambda (values)
-		  (setq parameters-cache (mapcar
-								  (lambda (elt)
-									(format "%-80s => %s"
-											(nth 0 elt)
-											(propertize (aws-ssm--truncate (nth 1 elt) 80)
-														'face 'aws-ssm-value-font)))
-								  values))
+		  (let ((ht (make-hash-table :test 'equal)))
+			(seq-do (lambda (elt)
+					  (puthash (nth 0 elt) (nth 1 elt) ht))
+					values)
+			(setq aws-ssm--parameters-model ht))
+		  (setq aws-ssm--parameters-view (mapcar
+										  (lambda (elt)
+											(format "%-80s => %s"
+													(nth 0 elt)
+													(propertize (aws-ssm--truncate (nth 1 elt) aws-ssm--value-limit-length)
+																'face 'aws-ssm-value-font)))
+										  values))
 		  (message "AWS SSM parameters cache updated")))))))
 
 (defun aws-ssm--truncate (value limit)
-  (let* ((break-line-pos (string-search "\n" value))
+  (let* ((break-line-pos (aws-ssm--break-line-pos value))
 		 (first-line (substring value 0 break-line-pos)))
 	(format "%s%s"
 			(aws-ssm--truncate-single-line first-line limit (if (not break-line-pos) "..."))
 			(or (if break-line-pos "...") ""))))
 
-(defun aws-ssm--truncate-single-line (value limit &optional ellipsis)
-  (if (<= (length value) limit)
-	  value
-	(format "%s%s" (substring value 0 limit) (or ellipsis ""))))
+(defun aws-ssm--truncate? (value limit)
+  (or
+   (not (null (aws-ssm--break-line-pos value)))
+   (aws-ssm--truncate-single-line? value limit)))
 
-;; TODO => Get should show the complete value, if not truncated at minibuffer, open buffer otherwise
+(defun aws-ssm--break-line-pos (value)
+  (string-search "\n" value))
+
+(defun aws-ssm--truncate-single-line (value limit &optional ellipsis)
+  (if (aws-ssm--truncate-single-line? value limit)
+	  (format "%s%s" (substring value 0 limit) (or ellipsis ""))
+	value))
+
+(defun aws-ssm--truncate-single-line? (value limit)
+  (> (length value) limit))
 
 (defun aws-ssm--get-parameters-names-async (command)
   (lambda ()
@@ -100,5 +113,5 @@
 				`(,(gethash "Name" x)
 				  ,(gethash "Value" x)))
 			  (gethash "Parameters" command-result-json)))
-	
-	(setq parameters-cache (parse-get-parameters-resp (execute-command)))))
+    
+	(parse-get-parameters-resp (execute-command))))
