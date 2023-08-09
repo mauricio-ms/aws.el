@@ -2,14 +2,6 @@
 (use-package async)
 (use-package consult)
 
-;; MISSING FEATURES
-;; - load next items when user came to the end of the list
-;; - handle multiple words separated by whitespaces
-;;     in these cases select on eto send the request to AWS and use the others to filter in emacs
-;; - load next items when filter found less than 10 results
-;; Check these alternatives to be able to implement the MISSING FEATURES
-;; https://github.com/minad/consult
-;; https://github.com/minad/vertico
 (defgroup aws nil
   "An interactive AWS environment for emacs."
   :tag "AWS")
@@ -45,23 +37,46 @@
   (consult--read parameters-cache
 				 :prompt "SSM: "
 				 :lookup (lambda (selected candidates input narrow)
-						   (let ((start-value-pos (next-property-change 0 selected)))
-							 (substring-no-properties selected start-value-pos)))
+						   (message (s-trim (nth 0 (s-split "=>" selected)))))
+				 ;; :lookup (lambda (selected candidates input narrow)
+				 ;; 		   (let ((start-value-pos (next-property-change 0 selected)))
+				 ;; 			 (substring-no-properties selected start-value-pos)))
 				 ;; :lookup (lambda (selected candidates input narrow)
 				 ;; 			 (aws-ssm--get-parameter-value selected))
 				 ))
 
-(defun aws-ssm--load-data ()
+(defun aws-ssm-reload-cache ()
+  (interactive)
   (message "AWS SSM updating parameters cache ...")
   (async-start
-   (aws-ssm--get-parameters-names-async "aws ssm describe-parameters --max-items 2")
+   (aws-ssm--get-parameters-names-async "aws ssm describe-parameters --max-items 10")
    (lambda (names)
 	 (let ((get-parameters-command (format "aws ssm get-parameters --names %s" (string-join names " "))))
 	   (async-start
 		(aws-ssm--get-parameters-values-async get-parameters-command)
 		(lambda (values)
-		  (setq parameters-cache values)
+		  (setq parameters-cache (mapcar
+								  (lambda (elt)
+									(format "%-80s => %s"
+											(nth 0 elt)
+											(propertize (aws-ssm--truncate (nth 1 elt) 80)
+														'face 'aws-ssm-value-font)))
+								  values))
 		  (message "AWS SSM parameters cache updated")))))))
+
+(defun aws-ssm--truncate (value limit)
+  (let* ((break-line-pos (string-search "\n" value))
+		 (first-line (substring value 0 break-line-pos)))
+	(format "%s%s"
+			(aws-ssm--truncate-single-line first-line limit (if (not break-line-pos) "..."))
+			(or (if break-line-pos "...") ""))))
+
+(defun aws-ssm--truncate-single-line (value limit &optional ellipsis)
+  (if (<= (length value) limit)
+	  value
+	(format "%s%s" (substring value 0 limit) (or ellipsis ""))))
+
+;; TODO => Get should show the complete value, if not truncated at minibuffer, open buffer otherwise
 
 (defun aws-ssm--get-parameters-names-async (command)
   (lambda ()
@@ -82,9 +97,8 @@
 
 	(defun parse-get-parameters-resp (command-result-json)
 	  (mapcar (lambda (x)
-				(format "%s => %s"
-						(gethash "Name" x)
-						(propertize (gethash "Value" x) 'face 'aws-ssm-value-font)))
+				`(,(gethash "Name" x)
+				  ,(gethash "Value" x)))
 			  (gethash "Parameters" command-result-json)))
 	
 	(setq parameters-cache (parse-get-parameters-resp (execute-command)))))
