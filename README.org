@@ -1,0 +1,31 @@
+* aws.el 
+
+aws.el is an interactive environment for Emacs.
+
+** aws-ssm.el
+
+aws-ssm provides a nice way to find AWS SSM parameters by using the consult package to enable fuzzy search.
+
+*WARNING:* aws-ssm is fast because all parameters are cached.
+*IN CASE THIS IS A PROBLEM TO YOU, DON'T USE IT.*
+
+To reload the cache you simply need to run the interactive function aws-ssm-update-cache.
+For the first use, this is loaded during the package initialization.
+
+*** Example
+
+**** List
+
+#+CAPTION: aws-ssm list example
+#+NAME:   fig:AWS-SSM-LIST-EXAMPLE
+#+ATTR_HTML: :width 800
+[[./resources/list-example.png]]
+
+**** Detail
+
+#+CAPTION: aws-ssm detail example
+#+NAME:   fig:AWS-SSM-DETAIL-EXAMPLE
+#+ATTR_HTML: :width 700
+[[./resources/detail-example.png]]
+
+
