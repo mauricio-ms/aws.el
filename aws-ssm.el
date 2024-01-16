@@ -41,6 +41,7 @@
   (let ((parameters-model (aws-ssm--read-data)))
 	(consult--read (aws-ssm--get-parameters-view parameters-model)
 				   :prompt "SSM: "
+				   :require-match t
 				   :lookup (lambda (selected candidates input narrow)
 							 (let ((value (gethash (s-trim (nth 0 (s-split "=>" selected)))
 												   parameters-model)))
